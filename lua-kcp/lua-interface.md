@@ -1,65 +1,14 @@
-# 动机
-lua-kcp和skynet组合使用时, 因为skynet的多线程多虚拟性环境, 会触发各种Crash, 这个工程在实际项目中使用(对战玩法), 解决了这些bug.这里提交一下，旨在记录一下，供大家参考。 
-####编译方法:
-    cd lua-kcp
-    make linux or make macosx
-####编译结果:
-    lkcp.so   与skynet无关的库, 客户端使用
-    lkcpsn.so 与skynet强耦合的库, 服务端使用
-# Introduction:
 
-Lua binding for KCP, interface description written in lua-interface.md, see details of the project description within the KCP. what is KCP? please visit: https://github.com/skywind3000/kcp, http://www.skywind.me/blog/archives/1048 
+# LUA-INTERFACE
 
-#Make:
-Just make
-
-#Structure:
-####3rd:
-    lua: taken lua53
-    kcp: visit https://github.com/skywind3000/kcp
-
-####src:
-    lkcp.c: the file for bind kcp
-    testkcp.lua: the file for test kcp
-
-####run_test.sh:
-    After the project compile successfully, you can run this file to test kcp
-
-#lua-interface:
-
-## LKcp.lkcp_init(output)
-
-### DESCRIPTION
-    Init KCP layer.
-
-### PARAMETERS
-    output: a callback for KCP layer to invoke when send data to transport layer
-    [
-        output prototype:
-            function output(info, buf)
-                ...
-            end
-        info is brought when invoke lkcp_create
-        buf is to be sent
-    ]
-
-### RETURN
-    ret: always 0
-
-## LKcp.lkcp_create(session, info)
+## LKcp.lkcp_create(session, func)
 
 ### DESCRIPTION
     Create kcp object.
 
 ### PARAMETERS
     session: number mark session 
-    info: extra info, when KCP layer invoke callback to send data, KCP layer would brings that to output
-    [
-        info prototype:
-            info = {1, "who", ...}
-        notice:
-            the form of info must be sequential, and elements must be string or integer
-    ]
+    func: extra closures, which KCP layer invoke callback to send data, see detail in testkcp.lua
 
 ### RETURN
     kcp: kcp object
