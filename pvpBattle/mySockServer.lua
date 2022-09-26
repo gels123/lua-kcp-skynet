@@ -30,8 +30,6 @@ function mySockServer:ctor()
     self.subid = 0      -- 连接id
     self.handshakeMap = {} -- uid握手关联信息
     self.handshakeFrom = {} -- from握手关联信息
-
-    self.sq = skynetqueue()
 end
 
 -- 初始化
@@ -85,7 +83,7 @@ function mySockServer:dispatch_msg(from, msg, sz)
             -- 创建kcp, 用于握手
             local kcp = self:getKcp(from, 0, 0)
             -- 若收到udp包, 则作为下层协议输入到kcp
-            kcp:lkcp_input(str)
+            kcp:lkcp_input(str, from)
             kcp:lkcp_update(self:getms())
             local hrlen, hr = kcp:lkcp_recv()
             Log.d("mySockServer:dispatch udp do handshake, from=", socketdriver.udp_address(from), "subid=", subid, "hrlen=", hrlen, "hr=", hr)
@@ -106,7 +104,7 @@ function mySockServer:dispatch_msg(from, msg, sz)
                         ip = socketdriver.udp_address(from),
                         ms = 0,
                         time = time,
-                        sq = self.sq,
+                        sq = skynetqueue(),
                     }
                     self.handshakeFrom[from] = self.handshakeMap[uid]
                     -- 回复握手包
@@ -118,7 +116,7 @@ function mySockServer:dispatch_msg(from, msg, sz)
                     local handshake = string.pack(">I4s2", 0, string.format("B@%d@%d@OKK@E", subid, time))
                     local sq = self.handshakeMap[uid].sq
                     sq(function()
-                        local r = kcp:lkcp_send(handshake)
+                        local r = kcp:lkcp_send(handshake, from)
                         if r < 0 then
                             Log.e("mySockServer:dispatch_msg do handshake error, from=", socketdriver.udp_address(from), "uid=", uid, "time=", time, "r=", r)
                             self.handshakeMap[uid] = nil
@@ -139,7 +137,7 @@ function mySockServer:dispatch_msg(from, msg, sz)
                         kcp = kcp,
                         ip = socketdriver.udp_address(from),
                         ms = 0,
-                        sq = self.sq,
+                        sq = skynetqueue(),
                     }
                     self.connectNum = self.connectNum + 1
                     if self.uidMap[uid] then
@@ -202,16 +200,17 @@ function mySockServer:dispatch_msg(from, msg, sz)
                 if self.handshakeFrom[from] then
                     local sq = self.handshakeFrom[from].sq
                     sq(function()
-                        self.handshakeFrom[from].kcp:lkcp_input(str)
+                        self.handshakeFrom[from].kcp:lkcp_input(str, from)
                     end)
                 end
             end
         elseif subid > 0 then
             local u = self.connection[subid]
             if u then
+                u.from = from
                 u.sq(function()
                     -- 若收到udp包, 则作为下层协议输入到kcp
-                    u.kcp:lkcp_input(str)
+                    u.kcp:lkcp_input(str, from)
                     -- 更新kcp, 获取并处理消息, 一个kcp帧最多执行1次update
                     local ms = self:getms()
                     local nexttime = u.kcp:lkcp_check(ms)
@@ -289,11 +288,11 @@ function mySockServer:response_msg(subid, response, cmd, msg)
         u.sq(function()
             if self.mode == eSocketMode.eUdpKcp then
                 local package = response(msg)
-                u.kcp:lkcp_send(package)
+                u.kcp:lkcp_send(package, u.from)
                 u.kcp:lkcp_flush()
             elseif self.mode == eSocketMode.eUdpKcpFec then
                 local package = response(msg)
-                u.kcp:lkcp_send(package)
+                u.kcp:lkcp_send(package, u.from)
                 u.kcp:lkcp_flush()
             end
         end)
@@ -308,7 +307,7 @@ function mySockServer:send_msg(uid, cmd, msg, subid)
             Log.d("mySockServer:send_msg", uid, cmd, msg, subid)
             if self.mode == eSocketMode.eUdpKcp then
                 local package = protoLib:s2cEncode(cmd, msg, 0)
-                local r = u.kcp:lkcp_send(package)
+                local r = u.kcp:lkcp_send(package, u.from)
                 if r < 0 then
                     Log.w("mySockServer:send_msg error", uid, cmd, msg, subid, "r=", r)
                     return
@@ -316,7 +315,7 @@ function mySockServer:send_msg(uid, cmd, msg, subid)
                 u.kcp:lkcp_flush()
             elseif self.mode == eSocketMode.eUdpKcpFec then
                 local package = protoLib:s2cEncode(cmd, msg, 0)
-                local r = u.kcp:lkcp_send(package)
+                local r = u.kcp:lkcp_send(package, u.from)
                 if r < 0 then
                     Log.w("mySockServer:send_msg error", uid, cmd, msg, subid, "r=", r)
                     return

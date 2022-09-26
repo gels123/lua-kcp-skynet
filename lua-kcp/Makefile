@@ -1,11 +1,11 @@
-LUA_VERSION =       5.4
-TARGET1 =           ../../luaclib/lutil.so
-TARGET2 =           ../../luaclib/lkcp.so
-TARGET3 =           ../../luaclib/lkcpsn.so
+LUA_VERSION =       5.3
+TARGET1 =           lutil.so
+TARGET2 =           lkcp.so
+TARGET3 =           lkcpsn.so
 PREFIX =            /usr/local
 CFLAGS =            -g -O2 -Wall -rdynamic -pedantic -DNDEBUG -std=gnu99 -Wformat
-LUA_INCLUDE_DIR =   ../../skynet/3rd/lua
-SKYNET_INCLUDE_DIR = ../../skynet/skynet-src
+LUA_INCLUDE_DIR =   ../../../skynet/3rd/lua
+SKYNET_INCLUDE_DIR = ../../../skynet/skynet-src
 
 LNX_LDFLAGS = -shared -L./ -Wl,-rpath ./
 MAC_LDFLAGS = -bundle -undefined dynamic_lookup -L./ -Wl,-rpath ./

@@ -38,9 +38,9 @@
 #include <lualib.h>
 
 #include "ikcp.h"
-#include "../../skynet/skynet-src/skynet_server.h"
-#include "../../skynet/skynet-src/socket_buffer.h"
-#include "../../skynet/skynet-src/skynet_socket.h"
+#include "../../../skynet/skynet-src/skynet_server.h"
+#include "../../../skynet/skynet-src/socket_buffer.h"
+#include "../../../skynet/skynet-src/skynet_socket.h"
 
 #define RECV_BUFFER_LEN 4*1024*1024
 
@@ -55,6 +55,7 @@ struct Callback {
     lua_State* L;
     lua_State* eL;
     char *address;
+    size_t addresssz;
 };
 
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
@@ -74,6 +75,29 @@ static uint64_t svrsock = 0;
 #define lock_off \
     pthread_mutex_unlock(&lock);
     // printf("pthread_mutex_lock unlock\n");\
+
+static void print_address(const uint8_t *addr, size_t sz) {
+	uint16_t port = 0;
+	memcpy(&port, addr+1, sizeof(uint16_t));
+	port = ntohs(port);
+	const void * src = addr+3;
+	char tmp[256];
+	int family;
+	if (sz == 1+2+4) {
+		family = AF_INET;
+	} else {
+		if (sz != 1+2+16) {
+            printf("debug kcp print_address error1\n");
+			return;
+		}
+		family = AF_INET6;
+	}
+	if (inet_ntop(family, src, tmp, sizeof(tmp)) == NULL) {
+        printf("debug kcp print_address error2\n");
+		return;
+	}
+    printf("debug kcp print_address ip=%s port=%d sz=%d\n", tmp, port, sz);
+}
 
 static int kcp_output_callback(const char *buf, int len, ikcpcb *kcp, void *arg) {
     struct Callback* c = (struct Callback*)arg;
@@ -193,9 +217,10 @@ static int lkcp_create(lua_State* L) {
     c->handle = 0;
     c->L = L;
     c->eL = L;
-    c->address = (char*)malloc(strlen(address)+1);
-    memset(c->address, 0, strlen(address)+1);
-    strcpy(c->address, address);
+    c->address = (char*)malloc(sz+1);
+    memset(c->address, 0, sz+1);
+    memcpy(c->address, address, sz);
+    c->addresssz = sz;
 
     ikcpcb* kcp = ikcp_create(conv, (void*)c);
     if (kcp == NULL) {
@@ -213,7 +238,8 @@ static int lkcp_create(lua_State* L) {
     lua_setmetatable(L, -2);
 
     // #ifdef logs_on
-        printf("debug kcp lkcp_create kcp=%p L=%p handle=%ld conv=%d svrsock=%ld address=%s\n", kcp, L, c->handle, conv, svrsock, address);
+        print_address(c->address, c->addresssz);
+        printf("debug kcp lkcp_create kcp=%p L=%p handle=%ld conv=%d svrsock=%ld address=%s addresssz=%d\n", kcp, L, c->handle, conv, svrsock, c->address, c->addresssz);
     // #endif
     lock_off
     return 1;
@@ -261,6 +287,19 @@ static int lkcp_send(lua_State* L) {
 	const char *data = luaL_checklstring(L, 2, &size);
     int32_t hr = ikcp_send(kcp, data, size);
     lua_pushinteger(L, hr);
+
+    size_t sz;
+    const uint8_t *address = (const uint8_t *)luaL_checklstring(L, 3, &sz);
+    if(address && sz) {
+        struct Callback* c = (struct Callback*)kcp->user;
+        if(c->addresssz != sz) {
+            free(c->address);
+            c->address = (char*)malloc(sz+1);
+            c->addresssz = sz;
+        }
+        memset(c->address, 0, sz+1);
+        memcpy(c->address, address, sz);
+    }
 
     #ifdef logs_on
         printf("debug kcp lkcp_send kcp=%p L=%p handle=%ld\n", kcp, L, ((struct Callback*)kcp->user)->handle);
@@ -319,10 +358,24 @@ static int lkcp_input(lua_State* L) {
         lock_off
         return 2;
 	}
+    
 	size_t size;
 	const char *data = luaL_checklstring(L, 2, &size);
     int32_t hr = ikcp_input(kcp, data, size);
     lua_pushinteger(L, hr);
+
+    size_t sz;
+    const uint8_t *address = (const uint8_t *)luaL_checklstring(L, 3, &sz);
+    if(address && sz) {
+        struct Callback* c = (struct Callback*)kcp->user;
+        if(c->addresssz != sz) {
+            free(c->address);
+            c->address = (char*)malloc(sz+1);
+            c->addresssz = sz;
+        }
+        memset(c->address, 0, sz+1);
+        memcpy(c->address, address, sz);
+    }
     
     #ifdef logs_on
         printf("debug kcp lkcp_input kcp=%p L=%p handle=%ld\n", kcp, L, ((struct Callback*)kcp->user)->handle);
