@@ -160,9 +160,10 @@ function mySockServer:dispatch_msg(from, msg, sz)
                             local ms = self:getms()
                             local nexttime = u.kcp:lkcp_check(ms)
                             local diff = nexttime - ms
-                            if diff >= 0 then
-                                skynet.sleep(math.floor(diff/10)) -- lutil.isleep(diff)
+                            if diff <= 0 then
+                                diff = 50
                             end
+                            skynet.sleep(math.ceil(diff/10)) -- lutil.isleep(diff)
                             u.sq(function()
                                 ms = self:getms()
                                 u.kcp:lkcp_update(ms)
@@ -390,11 +391,11 @@ function mySockServer:getKcp(from, subid, uid)
     -- 考虑到丢包重发, 设置最大收发窗口为128
     kcp:lkcp_wndsize(128, 128)
     -- 默认模式
-    -- kcp:lkcp_nodelay(0, 30, 0, 0)
+    -- kcp:lkcp_nodelay(0, 50, 0, 0)
     -- 普通模式, 关闭流控等
-    kcp:lkcp_nodelay(0, 30, 0, 1)
+    kcp:lkcp_nodelay(0, 50, 0, 1)
     -- 快速模式, 第一个参数nodelay启用以后若干常规加速将启动;第二个参数interval为内部处理时钟,默认设置为 10ms;第三个参数 resend为快速重传指标,设置为2;第四个参数为是否禁用常规流控,这里禁止
-    -- kcp:lkcp_nodelay(1, 30, 2, 1)
+    -- kcp:lkcp_nodelay(1, 50, 2, 1)
     -- 需要执行一下update
     kcp:lkcp_update(self:getms())
     return kcp
