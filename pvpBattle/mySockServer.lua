@@ -30,6 +30,8 @@ function mySockServer:ctor()
     self.subid = 0      -- 连接id
     self.handshakeMap = {} -- uid握手关联信息
     self.handshakeFrom = {} -- from握手关联信息
+
+    self.sq = skynetqueue()
 end
 
 -- 初始化
@@ -83,14 +85,16 @@ function mySockServer:dispatch_msg(from, msg, sz)
             -- 创建kcp, 用于握手
             local kcp = self:getKcp(from, 0, 0)
             -- 若收到udp包, 则作为下层协议输入到kcp
-            kcp:lkcp_input(str, from)
-            kcp:lkcp_update(self:getms())
-            local hrlen, hr = kcp:lkcp_recv()
+            local hrlen, hr = self.sq(function()
+                kcp:lkcp_input(str, from)
+                kcp:lkcp_update(self:getms())
+                return kcp:lkcp_recv()
+            end)
             Log.d("mySockServer:dispatch udp do handshake, from=", socketdriver.udp_address(from), "subid=", subid, "hrlen=", hrlen, "hr=", hr)
             if hrlen > 0 then
                 local arr = serviceFunctions.split(hr, "@")
                 local uid, time = tonumber(arr[2]), tonumber(arr[3])
-                if uid and uid > 0 and time and time > 0 then
+                if uid and uid > 0 and time and time > 0 and time > (self.handshakeMap[uid] and self.handshakeMap[uid].time or 0) then
                     -- 维护uid握手关联信息
                     if self.handshakeMap[uid] then
                         self.handshakeFrom[self.handshakeMap[uid].from] = nil
@@ -104,7 +108,6 @@ function mySockServer:dispatch_msg(from, msg, sz)
                         ip = socketdriver.udp_address(from),
                         ms = 0,
                         time = time,
-                        sq = skynetqueue(),
                     }
                     self.handshakeFrom[from] = self.handshakeMap[uid]
                     -- 回复握手包
@@ -113,9 +116,8 @@ function mySockServer:dispatch_msg(from, msg, sz)
                         self.subid = 1
                     end
                     subid = self.subid
-                    local handshake = string.pack(">I4s2", 0, string.format("B@%d@%d@OKK@E", subid, time))
-                    local sq = self.handshakeMap[uid].sq
-                    sq(function()
+                    self.sq(function()
+                        local handshake = string.pack(">I4s2", 0, string.format("B@%d@%d@OKK@E", subid, time))
                         local r = kcp:lkcp_send(handshake, from)
                         if r < 0 then
                             Log.e("mySockServer:dispatch_msg do handshake error, from=", socketdriver.udp_address(from), "uid=", uid, "time=", time, "r=", r)
@@ -137,7 +139,6 @@ function mySockServer:dispatch_msg(from, msg, sz)
                         kcp = kcp,
                         ip = socketdriver.udp_address(from),
                         ms = 0,
-                        sq = skynetqueue(),
                     }
                     self.connectNum = self.connectNum + 1
                     if self.uidMap[uid] then
@@ -158,13 +159,12 @@ function mySockServer:dispatch_msg(from, msg, sz)
                                 break
                             end
                             local ms = self:getms()
-                            local nexttime = u.kcp:lkcp_check(ms)
+                            local nexttime = self.sq(function()
+                                return u.kcp:lkcp_check(ms)
+                            end)
                             local diff = nexttime - ms
-                            if diff <= 0 then
-                                diff = 50
-                            end
-                            skynet.sleep(math.ceil(diff/10)) -- lutil.isleep(diff)
-                            u.sq(function()
+                            skynet.sleep(math.ceil((diff > 0 and diff or 50)/10)) -- lutil.isleep(diff)
+                            self.sq(function()
                                 ms = self:getms()
                                 u.kcp:lkcp_update(ms)
                             end)
@@ -176,8 +176,7 @@ function mySockServer:dispatch_msg(from, msg, sz)
                             skynet.sleep(50) --500ms
                             --Log.d("mySockServer:dispatch udp keep kcp i=", i, self.handshakeMap[uid] and self.handshakeMap[uid].time)
                             if self.handshakeMap[uid] then
-                                local sq = self.handshakeMap[uid].sq
-                                sq(function()
+                                self.sq(function()
                                     self.handshakeMap[uid].kcp:lkcp_update(self:getms())
                                 end)
                             else
@@ -199,8 +198,7 @@ function mySockServer:dispatch_msg(from, msg, sz)
                 kcp = nil
                 -- 收到回复握手包的确认包
                 if self.handshakeFrom[from] then
-                    local sq = self.handshakeFrom[from].sq
-                    sq(function()
+                    self.sq(function()
                         self.handshakeFrom[from].kcp:lkcp_input(str, from)
                     end)
                 end
@@ -209,34 +207,38 @@ function mySockServer:dispatch_msg(from, msg, sz)
             local u = self.connection[subid]
             if u then
                 u.from = from
-                u.sq(function()
+                local ms = self:getms()
+                local nexttime = self.sq(function()
                     -- 若收到udp包, 则作为下层协议输入到kcp
                     u.kcp:lkcp_input(str, from)
                     -- 更新kcp, 获取并处理消息, 一个kcp帧最多执行1次update
-                    local ms = self:getms()
-                    local nexttime = u.kcp:lkcp_check(ms)
-                    local diff = nexttime - ms
-                    if diff >= 0 then
-                        u.ms = nexttime
-                        skynet.sleep(math.floor(diff/10)) -- lutil.isleep(diff)
-                        if not u.ms then
-                            Log.d("mySockServer:dispatch udp return from=", socketdriver.udp_address(from), "subid=", self.subid, "uid=", u.uid, "nexttime=", nexttime)
-                            return
-                        end
+                    return u.kcp:lkcp_check(ms)
+                end)
+                local diff = nexttime - ms
+                if diff >= 0 then
+                    u.ms = nexttime
+                    skynet.sleep(math.ceil(diff/10)) -- lutil.isleep(diff)
+                    if not u.ms then
+                        Log.d("mySockServer:dispatch udp return from=", socketdriver.udp_address(from), "subid=", self.subid, "uid=", u.uid, "nexttime=", nexttime)
+                        return
                     end
+                end
+                self.sq(function()
                     ms = self:getms()
                     u.kcp:lkcp_update(ms)
-                    u.ms = nil
-                    while(1) do
-                        local hrlen, hr = u.kcp:lkcp_recv()
-                        --Log.d("mySockServer:dispatch udp do3 from=", socketdriver.udp_address(from), "subid=", self.subid, "uid=", u.uid, "hrlen=", hrlen, "hr=", hr, "nexttime=", nexttime, ms, diff)
-                        if hrlen > 0 then
-                            self:request(subid, hr, hrlen)
-                        else
-                            break
-                        end
-                    end
                 end)
+                u.ms = nil
+                while(1) do
+                    local hrlen, hr = self.sq(function()
+                        return u.kcp:lkcp_recv()
+                    end)
+                    --Log.d("mySockServer:dispatch udp do3 from=", socketdriver.udp_address(from), "subid=", self.subid, "uid=", u.uid, "hrlen=", hrlen, "hr=", hr, "nexttime=", nexttime, ms, diff)
+                    if hrlen > 0 then
+                        self:request(subid, hr, hrlen)
+                    else
+                        break
+                    end
+                end
             else
                 Log.w("mySockServer:dispatch udp ignore2", subid, str)
             end
@@ -286,7 +288,7 @@ function mySockServer:response_msg(subid, response, cmd, msg)
     --Log.d("mySockServer:response_msg subid=", subid, "cmd=", cmd, "msg=", msg)
     local u = self.connection[subid]
     if u then
-        u.sq(function()
+        self.sq(function()
             if self.mode == eSocketMode.eUdpKcp then
                 local package = response(msg)
                 u.kcp:lkcp_send(package, u.from)
@@ -304,7 +306,7 @@ end
 function mySockServer:send_msg(uid, cmd, msg, subid)
     local u = self.uidMap[uid] or self.connection[subid]
     if u then
-        u.sq(function()
+        self.sq(function()
             Log.d("mySockServer:send_msg", uid, cmd, msg, subid)
             if self.mode == eSocketMode.eUdpKcp then
                 local package = protoLib:s2cEncode(cmd, msg, 0)
@@ -385,20 +387,22 @@ end
 -- 创建kcp, 一条`连接`一个kcp
 function mySockServer:getKcp(from, subid, uid)
     Log.i("mySockServer:getKcp create ip=", socketdriver.udp_address(from), "subid=", subid, "uid=", uid)
-    local kcp = lkcp.lkcp_create(self.sock, from, subid, function (buf)
-        self:udp_output(buf, from, subid)
+    return self.sq(function()
+        local kcp = lkcp.lkcp_create(self.sock, from, subid, function (buf)
+            self:udp_output(buf, from, subid)
+        end)
+        -- 考虑到丢包重发, 设置最大收发窗口为128
+        kcp:lkcp_wndsize(128, 128)
+        -- 默认模式
+        -- kcp:lkcp_nodelay(0, 50, 0, 0)
+        -- 普通模式, 关闭流控等
+        kcp:lkcp_nodelay(0, 50, 0, 1)
+        -- 快速模式, 第一个参数nodelay启用以后若干常规加速将启动;第二个参数interval为内部处理时钟,默认设置为 10ms;第三个参数 resend为快速重传指标,设置为2;第四个参数为是否禁用常规流控,这里禁止
+        -- kcp:lkcp_nodelay(1, 50, 2, 1)
+        -- 需要执行一下update
+        kcp:lkcp_update(self:getms())
+        return kcp
     end)
-    -- 考虑到丢包重发, 设置最大收发窗口为128
-    kcp:lkcp_wndsize(128, 128)
-    -- 默认模式
-    -- kcp:lkcp_nodelay(0, 50, 0, 0)
-    -- 普通模式, 关闭流控等
-    kcp:lkcp_nodelay(0, 50, 0, 1)
-    -- 快速模式, 第一个参数nodelay启用以后若干常规加速将启动;第二个参数interval为内部处理时钟,默认设置为 10ms;第三个参数 resend为快速重传指标,设置为2;第四个参数为是否禁用常规流控,这里禁止
-    -- kcp:lkcp_nodelay(1, 50, 2, 1)
-    -- 需要执行一下update
-    kcp:lkcp_update(self:getms())
-    return kcp
 end
 
 return mySockServer

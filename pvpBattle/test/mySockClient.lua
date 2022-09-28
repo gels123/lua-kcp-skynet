@@ -77,7 +77,7 @@ function mySockClient:init(uid, mode, host, port)
 
     self.sock = assert(socket.udp())
     assert(self.sock:setpeername(self.host, self.port))
-    assert(self.sock:settimeout(0.01))
+    assert(self.sock:settimeout(0))
 
     print("==mySockClient:init end==", uid, mode, host, port)
     return true
@@ -94,7 +94,7 @@ function mySockClient:dispatch_msg()
             -- 请求握手
             self:handshake()
             -- 
-            lutil.isleep(500) --socket.sleep(diff/1000.0)
+            lutil.isleep(50) --socket.sleep(diff/1000.0)
         elseif self.subid == 0 then --已请求握手
             -- 处理握手回包
             self.ms = self:getms()
@@ -290,11 +290,11 @@ function mySockClient:getKcp(subid)
     -- 考虑到丢包重发, 设置最大收发窗口为128
     kcp:lkcp_wndsize(128, 128)
     -- 默认模式
-    -- kcp:lkcp_nodelay(0, 30, 0, 0)
+    -- kcp:lkcp_nodelay(0, 50, 0, 0)
     -- 普通模式, 关闭流控等
-    kcp:lkcp_nodelay(0, 30, 0, 1)
+    kcp:lkcp_nodelay(0, 50, 0, 1)
     -- 快速模式, 第二个参数nodelay启用以后若干常规加速将启动;第三个参数interval为内部处理时钟,默认设置为 10ms;第四个参数 resend为快速重传指标,设置为2;第五个参数为是否禁用常规流控,这里禁止
-    -- kcp:lkcp_nodelay(1, 30, 2, 1)
+    -- kcp:lkcp_nodelay(1, 50, 2, 1)
     -- 需要执行一下update
     self.ms = self:getms()
     kcp:lkcp_update(self.ms)

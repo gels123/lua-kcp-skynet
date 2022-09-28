@@ -55,7 +55,6 @@ struct Callback {
 
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 
-
 // #define logs_on
 
 #define lock_on \

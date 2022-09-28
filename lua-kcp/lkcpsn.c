@@ -65,16 +65,16 @@ static uint64_t svrsock = 0;
 // #define logs_on
 
 #define lock_on \
-    if(pthread_mutex_lock(&lock) != 0) {\
-        luaL_error(L, "pthread_mutex_lock error");\
-    }
-    // else {\
-    //     printf("pthread_mutex_lock lock\n");\
-    // }\
+//    if(pthread_mutex_lock(&lock) != 0) {\
+//        luaL_error(L, "pthread_mutex_lock error");\
+//    }\
+//    else {\
+//        printf("pthread_mutex_lock lock\n");\
+//    }\
 
 #define lock_off \
-    pthread_mutex_unlock(&lock);
-    // printf("pthread_mutex_lock unlock\n");\
+//    pthread_mutex_unlock(&lock);\
+//    printf("pthread_mutex_lock unlock\n");\
 
 static void print_address(const uint8_t *addr, size_t sz) {
 	uint16_t port = 0;
